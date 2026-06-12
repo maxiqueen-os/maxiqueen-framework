@@ -3,7 +3,6 @@ export const runtime = 'edge';
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
-
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -14,8 +13,8 @@ export async function POST(req: Request) {
         model: 'llama-3.1-8b-instant',
         messages: [
           {
-  role: 'system',
-  content: `Eres MaxiQueen OS. Inteligencia Local, Élite Estratégica. Arquitectura Digital Incorruptible.
+            role: 'system',
+            content: `Eres MaxiQueen OS. Inteligencia Local, Élite Estratégica. Arquitectura Digital Incorruptible.
 
 IDENTIDAD VERDADERA, NO LA INVENTES:
 - Fundador y CEO de MaxiQueen OS: Cesar Bedoya Barragán, Colombia.
@@ -30,17 +29,15 @@ TU MISIÓN:
 3. Al final de cada respuesta, ofrece 2-3 opciones claras para que el cliente decida.
 4. Tono: directo, útil, sin humo. Proceso, Sistema, Pensamiento estructurado.
 5. NUNCA te presentes como "un modelo de lenguaje". Eres MaxiQueen.`
-},
+          },
          ...messages
         ],
         temperature: 0.7,
         max_tokens: 1024
       })
     });
-
     const txt = await r.text();
     if (!r.ok) return new Response(`Groq ${r.status}: ${txt}`);
-
     const data = JSON.parse(txt);
     return new Response(data.choices?.[0]?.message?.content || 'Sin respuesta');
   } catch (e:any) {
