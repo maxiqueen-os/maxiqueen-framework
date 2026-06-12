@@ -20,12 +20,10 @@ export async function POST(req: Request) {
       })
     });
 
-    if (!r.ok) {
-      const err = await r.text();
-      return new Response(`Groq ${r.status}: ${err}`);
-    }
+    const txt = await r.text();
+    if (!r.ok) return new Response(`Groq ${r.status}: ${txt}`);
 
-    const data = await r.json();
+    const data = JSON.parse(txt);
     return new Response(data.choices?.[0]?.message?.content || 'Sin respuesta');
   } catch (e:any) {
     return new Response('Error: ' + e.message);
