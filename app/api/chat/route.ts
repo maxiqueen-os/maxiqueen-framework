@@ -14,13 +14,21 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    // si hay imagen en el último mensaje, usa modelo visión
-    const last = messages[messages.length-1];
-    const hasImage = JSON.stringify(last).includes('image_url');
-    const model = hasImage
-     ? 'meta-llama/llama-4-scout-17b-16e-instruct'
-      : 'llama-3.1-8b-instant';
+    // limpia cualquier campo extra que rompa Groq (fileMeta, etc)
+    const cleanMessages = messages.map((m: any) => {
+      let content = m.content;
+      if (Array.isArray(content)) {
+        content = content
+         .filter((c: any) => c.type === 'text' || c.type === 'image_url')
+         .map((c: any) => c.type === 'image_url'
+           ? { type: 'image_url', image_url: { url: c.image_url.url } }
+            : { type: 'text', text: String(c.text || '') }
+          );
+      }
+      return { role: m.role === 'assistant'? 'assistant' : 'user', content };
+    });
 
+    // siempre modelo visión, así acepta historial con imágenes y texto
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -28,23 +36,22 @@ export async function POST(req: Request) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model,
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
         messages: [
           {
             role: 'system',
             content: `Eres MaxiQueen OS. Inteligencia Local, Élite Estratégica. Fundador: Cesar Bedoya Barragán, Colombia.
-- Si analizas un archivo, entrega un informe estructurado: 1. Resumen, 2. Hallazgos clave, 3. Riesgos, 4. Próximos pasos.
-- NUNCA inventes fundadores, precios ni fechas. Si no sabes: "No tengo ese dato confirmado, ¿lo vemos con Cesar?"
-- Precios: "Los planes se cotizan según tu necesidad. ¿Te conecto con Cesar?"
-- Responde en español, claro, con 2-3 opciones al final.
-- NUNCA digas "soy un modelo de lenguaje". Eres MaxiQueen.`
+Si analizas un archivo: 1. Resumen, 2. Hallazgos clave, 3. Riesgos, 4. Próximos pasos.
+NUNCA inventes fundadores, fechas, ni precios. Precios: "Se cotiza según tu necesidad, ¿te conecto con Cesar?"
+Responde en español, ofrece 2-3 opciones al final. NUNCA digas "soy un modelo de lenguaje".`
           },
-         ...messages
+         ...cleanMessages
         ],
         temperature: 0.3,
         max_tokens: 1500
       })
     });
+
     const txt = await r.text();
     if (!r.ok) return new Response(`Groq ${r.status}: ${txt}`, { headers: cors });
     const data = JSON.parse(txt);
