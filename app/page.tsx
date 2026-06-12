@@ -1,7 +1,11 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-type Msg = { role: 'user' | 'assistant', content: any };
+type Msg = {
+  role: 'user' | 'assistant';
+  content: any;
+  fileMeta?: { name: string; type: string };
+};
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([
@@ -10,21 +14,22 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [file, setFile] = useState<{name:string, type:string, dataUrl?:string, text?:string} | null>(null);
+  const [file, setFile] = useState<{name:string; type:string; dataUrl?:string; text?:string} | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
 
   const synth = typeof window!== 'undefined'? window.speechSynthesis : null;
   const speak = useCallback((text: string) => {
     if (!synth ||!voiceEnabled) return;
     synth.cancel();
-    const u = new SpeechSynthesisUtterance(typeof text === 'string'? text : '');
+    const u = new SpeechSynthesisUtterance(text);
     u.lang = 'es-ES'; u.rate = 1.0; synth.speak(u);
   }, [voiceEnabled]);
 
   const toggleVoice = () => { if (voiceEnabled && synth) synth.cancel(); setVoiceEnabled(!voiceEnabled); };
   const pauseVoice = () => { if (!synth) return; if (synth.speaking &&!synth.paused) synth.pause(); else synth.resume(); };
 
-  // carga parsers desde CDN, una vez
+  // carga parsers
   useEffect(() => {
     const load = (src: string) => new Promise(res => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = res; document.head.appendChild(s); });
     (async () => {
@@ -32,95 +37,141 @@ export default function ChatPage() {
       if (!window.mammoth) await load('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js');
       // @ts-ignore
       if (!window.XLSX) await load('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-      // pdf.js
-      // @ts-ignore
-      if (!window.pdfjsLib) { await load('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs'); }
     })();
   }, []);
+
+  const compressImage = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1024;
+      let { width, height } = img;
+      if (width > max || height > max) {
+        const r = Math.min(max / width, max / height);
+        width *= r; height *= r;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
 
   const handleFile = async (f: File) => {
     if (f.size > 10 * 1024 * 1024) { alert('Máximo 10MB'); return; }
     const name = f.name; const type = f.type;
 
-    // imágenes -> dataURL para visión
     if (type.startsWith('image/')) {
-      const dataUrl = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f); });
-      setFile({ name, type, dataUrl }); return;
+      try {
+        const dataUrl = await compressImage(f);
+        // ~1.3MB max después de comprimir
+        setFile({ name, type, dataUrl });
+        return;
+      } catch { alert('No pude leer la imagen'); return; }
     }
-    // texto plano
-    if (type.startsWith('text/') || name.endsWith('.csv') || name.endsWith('.txt')) {
-      const text = await f.text(); setFile({ name, type, text: text.slice(0, 30000) }); return;
+    if (type.startsWith('text/') || /\.(txt|csv|md|json)$/i.test(name)) {
+      const text = await f.text();
+      setFile({ name, type, text: text.slice(0, 12000) }); return;
     }
     // PDF
     if (type === 'application/pdf' || name.endsWith('.pdf')) {
       try {
         // @ts-ignore
-        const pdfjs = window.pdfjsLib; pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs';
-        const buf = await f.arrayBuffer();
-        const pdf = await pdfjs.getDocument({data: buf}).promise;
-        let out = ''; for (let i=1;i<=Math.min(pdf.numPages, 20);i++){ const p=await pdf.getPage(i); const c=await p.getTextContent(); out += c.items.map((x:any)=>x.str).join(' ')+'\n'; }
-        setFile({ name, type, text: out.slice(0, 30000) }); return;
+        if (!window.pdfjsLib) {
+          const s = document.createElement('script');
+          s.type = 'module';
+          await new Promise(r => { s.onload = r; document.head.appendChild(s); });
+        }
+        // fallback simple: lee como texto, si falla avisa
+        const text = await f.text().catch(() => '');
+        if (text.length > 50) { setFile({ name, type, text: text.slice(0, 12000) }); return; }
       } catch {}
+      setFile({ name, type, text: `PDF adjunto: ${name} (${(f.size/1024).toFixed(0)} KB). No pude extraer texto en el navegador, describe qué necesitas analizar.` });
+      return;
     }
     // DOCX
     if (name.endsWith('.docx')) {
       try {
         // @ts-ignore
         const mammoth = window.mammoth;
-        const buf = await f.arrayBuffer();
-        const r = await mammoth.extractRawText({arrayBuffer: buf});
-        setFile({ name, type, text: r.value.slice(0, 30000) }); return;
+        if (mammoth) {
+          const buf = await f.arrayBuffer();
+          const r = await mammoth.extractRawText({ arrayBuffer: buf });
+          setFile({ name, type, text: r.value.slice(0, 12000) }); return;
+        }
       } catch {}
     }
-    // XLSX / XLS
+    // XLSX
     if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
       try {
         // @ts-ignore
         const XLSX = window.XLSX;
-        const buf = await f.arrayBuffer();
-        const wb = XLSX.read(buf); let out = '';
-        wb.SheetNames.slice(0,3).forEach((n:string)=>{ out += `\n=== Hoja ${n} ===\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0,10000) });
-        setFile({ name, type, text: out.slice(0, 30000) }); return;
+        if (XLSX) {
+          const buf = await f.arrayBuffer();
+          const wb = XLSX.read(buf); let out = '';
+          wb.SheetNames.slice(0,3).forEach((n:string) => {
+            out += `\n=== ${n} ===\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0,5000);
+          });
+          setFile({ name, type, text: out.slice(0, 12000) }); return;
+        }
       } catch {}
     }
-    //.exe y otros binarios: no ejecutar, solo metadatos
+    //.exe y binarios
     if (name.endsWith('.exe') || type === 'application/octet-stream') {
-      setFile({ name, type, text: `Archivo ejecutable detectado: ${name}\nTamaño: ${(f.size/1024/1024).toFixed(2)} MB\nPor seguridad no ejecuto binarios. Si quieres un análisis estático dime qué buscas.` });
+      setFile({ name, type, text: `Archivo ejecutable: ${name}, ${(f.size/1024/1024).toFixed(2)} MB. Por seguridad no ejecuto binarios. ¿Qué necesitas revisar?` });
       return;
     }
     // fallback
-    setFile({ name, type, text: `Archivo adjunto: ${name} (${type}, ${(f.size/1024).toFixed(0)} KB). No pude extraer texto automáticamente.` });
+    setFile({ name, type, text: `Archivo adjunto: ${name} (${type}, ${(f.size/1024).toFixed(0)} KB)` });
   };
 
   const send = async () => {
     if ((!input.trim() &&!file) || loading) return;
-    let userContent: any = input || `Analiza el archivo ${file?.name}`;
 
+    // lo que ve el usuario en el chat
+    const displayText = input || `📎 ${file?.name}`;
+    const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file? { name: file.name, type: file.type } : undefined };
+
+    setMessages(m => [...m, userMsg]);
+
+    // lo que va a Groq
+    let apiContent: any = input || `Analiza el archivo ${file?.name}`;
     if (file?.dataUrl) {
-      // visión
-      userContent = [
-        { type: 'text', text: input || `Analiza esta imagen (${file.name}) y entrega un informe estructurado.` },
+      apiContent = [
+        { type: 'text', text: input || `Analiza esta imagen (${file.name}). Describe qué ves y entrega un informe.` },
         { type: 'image_url', image_url: { url: file.dataUrl } }
       ];
     } else if (file?.text) {
-      userContent = `Archivo: ${file.name}\n\nContenido extraído:\n${file.text}\n\nInstrucción del usuario: ${input || 'Genera un informe completo de este documento.'}`;
+      apiContent = `Archivo: ${file.name}\n\n${file.text}\n\nInstrucción: ${input || 'Genera un informe estructurado de este documento.'}`;
     }
 
-    const newMessages: Msg[] = [...messages, { role: 'user', content: userContent }];
-    setMessages(newMessages);
+    const apiMessages = [...messages, { role: 'user', content: apiContent }]
+     .map(m => typeof m.content === 'string'? m : { role: m.role, content: m.content });
+
     setInput(''); const sentFile = file; setFile(null); setLoading(true);
 
     try {
-      const apiMessages = newMessages.map(m => typeof m.content === 'string'? m : { role: m.role, content: m.content });
-      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: apiMessages }) });
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: apiMessages })
+      });
       const reply = await r.text();
+      if (!r.ok) throw new Error(reply);
       setMessages(m => [...m, { role: 'assistant', content: reply }]);
       speak(reply);
-    } catch (e) {
-      setMessages(m => [...m, { role: 'assistant', content: 'Error de conexión.' }]);
+    } catch (e:any) {
+      const msg = String(e.message || e);
+      const friendly = msg.includes('PAYLOAD_TOO_LARGE') || msg.includes('413')
+       ? 'La imagen era muy pesada. Ya la comprimo automáticamente, intenta adjuntarla de nuevo.'
+        : 'Error de conexión con Groq.';
+      setMessages(m => [...m, { role: 'assistant', content: friendly }]);
     }
     setLoading(false);
   };
+
+  useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [messages]);
 
   // puente voz padre
   useEffect(() => {
@@ -134,7 +185,7 @@ export default function ChatPage() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [speak]);
+  }, []);
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
@@ -144,12 +195,17 @@ export default function ChatPage() {
           <p style={{ color: '#9ca3af', marginTop: 8 }}>ARQUITECTURA DIGITAL INCORRUPTIBLE</p>
           <p style={{ color: '#facc15', fontSize: 12 }}>INTELIGENCIA LOCAL • ÉLITE ESTRATÉGICA</p>
         </div>
-        <div style={{ background: '#141414', border: '1px solid #262626', borderRadius: 16, padding: 20, minHeight: 420 }}>
-          <div style={{ height: 380, overflowY: 'auto', marginBottom: 16 }}>
+        <div style={{ background: '#141414', border: '1px solid #262626', borderRadius: 16, padding: 20 }}>
+          <div ref={logRef} style={{ height: 380, overflowY: 'auto', marginBottom: 16 }}>
             {messages.map((m, i) => (
               <div key={i} style={{ marginBottom: 14, textAlign: m.role === 'user'? 'right' : 'left' }}>
-                <span style={{ display: 'inline-block', background: m.role === 'user'? '#facc15' : '#1f1f1f', color: m.role === 'user'? '#0a0a0a' : '#e5e5e5', padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap' }}>
-                  {typeof m.content === 'string'? m.content : '[Imagen adjunta]'}
+                <span style={{
+                  display: 'inline-block', background: m.role === 'user'? '#facc15' : '#1f1f1f',
+                  color: m.role === 'user'? '#0a0a0a' : '#e5e5e5',
+                  padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap'
+                }}>
+                  {typeof m.content === 'string'? m.content : '[Imagen]'}
+                  {m.fileMeta && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}</div>}
                 </span>
               </div>
             ))}
@@ -163,13 +219,13 @@ export default function ChatPage() {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="file" ref={fileRef} hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input type="file" ref={fileRef} hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.md,.json"
               onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
             <button onClick={() => fileRef.current?.click()}
               style={{ background: '#1f1f1f', color: '#e5e5e5', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>📎</button>
             <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()}
-              placeholder="Escribe o adjunta un archivo para analizar..."
+              placeholder="Escribe o adjunta un archivo..."
               style={{ flex: 1, background: '#0a0a0a', color: '#fff', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', outline: 'none' }} />
             <button onClick={send} disabled={loading}
               style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer' }}>
@@ -182,7 +238,7 @@ export default function ChatPage() {
               {voiceEnabled? '🔊 Silenciar' : '🔇 Activar voz'}
             </button>
             <button onClick={pauseVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>⏯ Pausar</button>
-            <span>Analiza imágenes, PDF, Word, Excel • Max 10MB</span>
+            <span>Imágenes, PDF, Word, Excel • máx 10MB</span>
           </div>
         </div>
         <p style={{ textAlign: 'center', color: '#555', fontSize: 12, marginTop: 24 }}>
