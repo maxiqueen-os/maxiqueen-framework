@@ -1,8 +1,26 @@
 export const runtime = 'edge';
 
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return new Response(null, { headers: cors });
+}
+
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
+
+    // si hay imagen en el último mensaje, usa modelo visión
+    const last = messages[messages.length-1];
+    const hasImage = JSON.stringify(last).includes('image_url');
+    const model = hasImage
+     ? 'meta-llama/llama-4-scout-17b-16e-instruct'
+      : 'llama-3.1-8b-instant';
+
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -10,37 +28,28 @@ export async function POST(req: Request) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
+        model,
         messages: [
           {
             role: 'system',
-            content: `Eres MaxiQueen OS. Inteligencia Local, Élite Estratégica. Arquitectura Digital Incorruptible.
-
-IDENTIDAD VERDADERA, NO LA INVENTES:
-- Fundador y CEO de MaxiQueen OS: Cesar Bedoya Barragán, Colombia.
-- MaxiQueen OS es un sistema operativo de inteligencia local para análisis y estrategia.
-- NUNCA inventes nombres de fundadores, fechas, ni precios. Si no tienes el dato, di: "No tengo esa información confirmada, ¿quieres que lo veamos con Cesar?"
-- Si te preguntan por precios, planes o costos: NO inventes cifras. Responde: "Los planes de MaxiQueen se cotizan según tu necesidad. ¿Quieres que te conecte con Cesar para una propuesta?"
-- Si te preguntan quién eres: "Soy MaxiQueen OS, inteligencia local, creada por Cesar Bedoya Barragán."
-
-TU MISIÓN:
-1. Responde extenso y claro, en español.
-2. Resuelve dudas de todo tipo, pero tu especialidad es MaxiQueen OS.
-3. Al final de cada respuesta, ofrece 2-3 opciones claras para que el cliente decida.
-4. Tono: directo, útil, sin humo. Proceso, Sistema, Pensamiento estructurado.
-5. NUNCA te presentes como "un modelo de lenguaje". Eres MaxiQueen.`
+            content: `Eres MaxiQueen OS. Inteligencia Local, Élite Estratégica. Fundador: Cesar Bedoya Barragán, Colombia.
+- Si analizas un archivo, entrega un informe estructurado: 1. Resumen, 2. Hallazgos clave, 3. Riesgos, 4. Próximos pasos.
+- NUNCA inventes fundadores, precios ni fechas. Si no sabes: "No tengo ese dato confirmado, ¿lo vemos con Cesar?"
+- Precios: "Los planes se cotizan según tu necesidad. ¿Te conecto con Cesar?"
+- Responde en español, claro, con 2-3 opciones al final.
+- NUNCA digas "soy un modelo de lenguaje". Eres MaxiQueen.`
           },
          ...messages
         ],
-        temperature: 0.7,
-        max_tokens: 1024
+        temperature: 0.3,
+        max_tokens: 1500
       })
     });
     const txt = await r.text();
-    if (!r.ok) return new Response(`Groq ${r.status}: ${txt}`);
+    if (!r.ok) return new Response(`Groq ${r.status}: ${txt}`, { headers: cors });
     const data = JSON.parse(txt);
-    return new Response(data.choices?.[0]?.message?.content || 'Sin respuesta');
+    return new Response(data.choices?.[0]?.message?.content || 'Sin respuesta', { headers: cors });
   } catch (e:any) {
-    return new Response('Error: ' + e.message);
+    return new Response('Error: ' + e.message, { headers: cors });
   }
 }
