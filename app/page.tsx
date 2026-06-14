@@ -24,7 +24,7 @@ export default function ChatPage() {
     synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'es-ES'; u.rate = 1.0; synth.speak(u);
-  }, [voiceEnabled]);
+  }, [voiceEnabled, synth]);
 
   const toggleVoice = () => { if (voiceEnabled && synth) synth.cancel(); setVoiceEnabled(!voiceEnabled); };
   const pauseVoice = () => { if (!synth) return; if (synth.speaking &&!synth.paused) synth.pause(); else synth.resume(); };
@@ -37,6 +37,12 @@ export default function ChatPage() {
       if (!window.mammoth) await load('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js');
       // @ts-ignore
       if (!window.XLSX) await load('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+      // @ts-ignore
+      if (!window.pdfjsLib) {
+        await load('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+        // @ts-ignore
+        if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
     })();
   }, []);
 
@@ -59,13 +65,12 @@ export default function ChatPage() {
   });
 
   const handleFile = async (f: File) => {
-    if (f.size > 10 * 1024 * 1024) { alert('Máximo 10MB'); return; }
+    if (f.size > 10 * 1024) { alert('Máximo 10MB'); return; }
     const name = f.name; const type = f.type;
 
     if (type.startsWith('image/')) {
       try {
         const dataUrl = await compressImage(f);
-        // ~1.3MB max después de comprimir
         setFile({ name, type, dataUrl });
         return;
       } catch { alert('No pude leer la imagen'); return; }
@@ -74,20 +79,26 @@ export default function ChatPage() {
       const text = await f.text();
       setFile({ name, type, text: text.slice(0, 12000) }); return;
     }
-    // PDF
+    // PDF con pdf.js real
     if (type === 'application/pdf' || name.endsWith('.pdf')) {
       try {
         // @ts-ignore
-        if (!window.pdfjsLib) {
-          const s = document.createElement('script');
-          s.type = 'module';
-          await new Promise(r => { s.onload = r; document.head.appendChild(s); });
+        const pdfjs = window.pdfjsLib;
+        if (pdfjs) {
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjs.getDocument({ data: buf }).promise;
+          let out = '';
+          const pages = Math.min(pdf.numPages, 10);
+          for (let i = 1; i <= pages; i++) {
+            const page = await pdf.getPage(i);
+            const tc = await page.getTextContent();
+            out += tc.items.map((it:any) => it.str).join(' ') + '\n\n';
+            if (out.length > 12000) break;
+          }
+          setFile({ name, type, text: out.slice(0, 12000) }); return;
         }
-        // fallback simple: lee como texto, si falla avisa
-        const text = await f.text().catch(() => '');
-        if (text.length > 50) { setFile({ name, type, text: text.slice(0, 12000) }); return; }
       } catch {}
-      setFile({ name, type, text: `PDF adjunto: ${name} (${(f.size/1024).toFixed(0)} KB). No pude extraer texto en el navegador, describe qué necesitas analizar.` });
+      setFile({ name, type, text: `PDF adjunto: ${name}. No pude extraer texto, describe qué necesitas.` });
       return;
     }
     // DOCX
@@ -117,39 +128,34 @@ export default function ChatPage() {
         }
       } catch {}
     }
-    //.exe y binarios
-    if (name.endsWith('.exe') || type === 'application/octet-stream') {
-      setFile({ name, type, text: `Archivo ejecutable: ${name}, ${(f.size/1024/1024).toFixed(2)} MB. Por seguridad no ejecuto binarios. ¿Qué necesitas revisar?` });
-      return;
-    }
-    // fallback
     setFile({ name, type, text: `Archivo adjunto: ${name} (${type}, ${(f.size/1024).toFixed(0)} KB)` });
   };
 
   const send = async () => {
     if ((!input.trim() &&!file) || loading) return;
 
-    // lo que ve el usuario en el chat
     const displayText = input || `📎 ${file?.name}`;
     const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file? { name: file.name, type: file.type } : undefined };
 
     setMessages(m => [...m, userMsg]);
 
-    // lo que va a Groq
     let apiContent: any = input || `Analiza el archivo ${file?.name}`;
     if (file?.dataUrl) {
       apiContent = [
-        { type: 'text', text: input || `Analiza esta imagen (${file.name}). Describe qué ves y entrega un informe.` },
+        { type: 'text', text: input || `Analiza esta imagen (${file.name}).` },
         { type: 'image_url', image_url: { url: file.dataUrl } }
       ];
     } else if (file?.text) {
-      apiContent = `Archivo: ${file.name}\n\n${file.text}\n\nInstrucción: ${input || 'Genera un informe estructurado de este documento.'}`;
+      apiContent = `Archivo: ${file.name}\n\n${file.text}\n\nInstrucción: ${input || 'Genera un informe estructurado.'}`;
     }
 
     const apiMessages = [...messages, { role: 'user', content: apiContent }]
-     .map(m => typeof m.content === 'string'? m : { role: m.role, content: m.content });
+     .map(m => ({ role: m.role, content: m.content }));
 
-    setInput(''); const sentFile = file; setFile(null); setLoading(true);
+    setInput(''); setFile(null); setLoading(true);
+
+    // placeholder assistant para ir streameando
+    setMessages(m => [...m, { role: 'assistant', content: '' }]);
 
     try {
       const r = await fetch('/api/chat', {
@@ -157,23 +163,49 @@ export default function ChatPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: apiMessages })
       });
-      const reply = await r.text();
-      if (!r.ok) throw new Error(reply);
-      setMessages(m => [...m, { role: 'assistant', content: reply }]);
-      speak(reply);
+      if (!r.ok ||!r.body) throw new Error(await r.text());
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        // parse SSE de Groq
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') break;
+          try {
+            const json = JSON.parse(data);
+            const delta = json.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              fullText += delta;
+              setMessages(m => {
+                const copy = [...m];
+                copy[copy.length - 1] = { role: 'assistant', content: fullText };
+                return copy;
+              });
+            }
+          } catch {}
+        }
+      }
+      speak(fullText);
     } catch (e:any) {
       const msg = String(e.message || e);
-      const friendly = msg.includes('PAYLOAD_TOO_LARGE') || msg.includes('413')
-       ? 'La imagen era muy pesada. Ya la comprimo automáticamente, intenta adjuntarla de nuevo.'
-        : 'Error de conexión con Groq.';
-      setMessages(m => [...m, { role: 'assistant', content: friendly }]);
+      setMessages(m => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión con Groq.' };
+        return copy;
+      });
     }
     setLoading(false);
   };
 
   useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [messages]);
 
-  // puente voz padre
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'MQ_VOICE') {
@@ -185,7 +217,7 @@ export default function ChatPage() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [synth]);
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
