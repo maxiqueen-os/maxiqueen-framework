@@ -20,7 +20,7 @@ export default function ChatPage() {
 
   const synth = typeof window!== 'undefined'? window.speechSynthesis : null;
   const speak = useCallback((text: string) => {
-    if (!synth ||!voiceEnabled) return;
+    if (!synth ||!voiceEnabled ||!text) return;
     synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'es-ES'; u.rate = 1.0; synth.speak(u);
@@ -31,7 +31,7 @@ export default function ChatPage() {
 
   // carga parsers
   useEffect(() => {
-    const load = (src: string) => new Promise(res => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    const load = (src: string) => new Promise<void>(res => { const s = document.createElement('script'); s.src = src; s.onload = () => res(); s.onerror = () => res(); document.head.appendChild(s); });
     (async () => {
       // @ts-ignore
       if (!window.mammoth) await load('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js');
@@ -48,7 +48,9 @@ export default function ChatPage() {
 
   const compressImage = (file: File): Promise<string> => new Promise((resolve, reject) => {
     const img = new Image();
+    const url = URL.createObjectURL(file);
     img.onload = () => {
+      URL.revokeObjectURL(url);
       const max = 1024;
       let { width, height } = img;
       if (width > max || height > max) {
@@ -60,12 +62,12 @@ export default function ChatPage() {
       canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL('image/jpeg', 0.8));
     };
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
+    img.onerror = () => { URL.revokeObjectURL(url); reject(); };
+    img.src = url;
   });
 
   const handleFile = async (f: File) => {
-    if (f.size > 10 * 1024) { alert('Máximo 10MB'); return; }
+    if (f.size > 10 * 1024 * 1024) { alert('Máximo 10MB'); return; }
     const name = f.name; const type = f.type;
 
     if (type.startsWith('image/')) {
@@ -79,7 +81,7 @@ export default function ChatPage() {
       const text = await f.text();
       setFile({ name, type, text: text.slice(0, 12000) }); return;
     }
-    // PDF con pdf.js real
+    // PDF
     if (type === 'application/pdf' || name.endsWith('.pdf')) {
       try {
         // @ts-ignore
@@ -98,7 +100,7 @@ export default function ChatPage() {
           setFile({ name, type, text: out.slice(0, 12000) }); return;
         }
       } catch {}
-      setFile({ name, type, text: `PDF adjunto: ${name}. No pude extraer texto, describe qué necesitas.` });
+      setFile({ name, type, text: `PDF adjunto: ${name}. No pude extraer texto en el navegador, describe qué necesitas analizar.` });
       return;
     }
     // DOCX
@@ -136,7 +138,6 @@ export default function ChatPage() {
 
     const displayText = input || `📎 ${file?.name}`;
     const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file? { name: file.name, type: file.type } : undefined };
-
     setMessages(m => [...m, userMsg]);
 
     let apiContent: any = input || `Analiza el archivo ${file?.name}`;
@@ -153,8 +154,6 @@ export default function ChatPage() {
      .map(m => ({ role: m.role, content: m.content }));
 
     setInput(''); setFile(null); setLoading(true);
-
-    // placeholder assistant para ir streameando
     setMessages(m => [...m, { role: 'assistant', content: '' }]);
 
     try {
@@ -167,41 +166,47 @@ export default function ChatPage() {
 
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
       let fullText = '';
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value);
-        // parse SSE de Groq
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') break;
-          try {
-            const json = JSON.parse(data);
-            const delta = json.choices?.[0]?.delta?.content || '';
-            if (delta) {
-              fullText += delta;
-              setMessages(m => {
-                const copy = [...m];
-                copy[copy.length - 1] = { role: 'assistant', content: fullText };
-                return copy;
-              });
-            }
-          } catch {}
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') break;
+            try {
+              const json = JSON.parse(data);
+              const delta = json.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                fullText += delta;
+                setMessages(m => {
+                  const copy = [...m];
+                  copy[copy.length - 1] = { role: 'assistant', content: fullText };
+                  return copy;
+                });
+              }
+            } catch {}
+          }
         }
       }
-      speak(fullText);
+      if (fullText) speak(fullText);
     } catch (e:any) {
-      const msg = String(e.message || e);
       setMessages(m => {
         const copy = [...m];
-        copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión con Groq.' };
+        copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión con Groq: ' + String(e.message || e) };
         return copy;
       });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [messages]);
@@ -256,11 +261,11 @@ export default function ChatPage() {
               onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
             <button onClick={() => fileRef.current?.click()}
               style={{ background: '#1f1f1f', color: '#e5e5e5', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>📎</button>
-            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()}
+            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' &&!e.shiftKey && (e.preventDefault(), send())}
               placeholder="Escribe o adjunta un archivo..."
               style={{ flex: 1, background: '#0a0a0a', color: '#fff', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', outline: 'none' }} />
             <button onClick={send} disabled={loading}
-              style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer' }}>
+              style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer', opacity: loading? 0.6 : 1 }}>
               Enviar
             </button>
           </div>
