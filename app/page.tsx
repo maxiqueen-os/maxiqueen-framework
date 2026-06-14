@@ -120,7 +120,7 @@ export default function ChatPage() {
   });
 
   const handleFile = async (f: File) => {
-    if (f.size > 10 * 1024) { alert('Máximo 10MB'); return; }
+    if (f.size > 10 * 1024 * 1024) { alert('Máximo 10MB'); return; }
     const name = f.name; const type = f.type;
 
     if (type.startsWith('image/')) {
