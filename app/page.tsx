@@ -26,6 +26,14 @@ export default function ChatPage() {
     u.lang = 'es-ES'; u.rate = 1.0; synth.speak(u);
   }, [voiceEnabled, synth]);
 
+  const cleanForVoice = (text: string) =>
+  text
+    .replace(/\*\*(.*?)\*\*/g, '$1')   // **negrita**
+    .replace(/\*(.*?)\*/g, '$1')       // *cursiva*
+    .replace(/#{1,6}\s/g, '')          // ### títulos
+    .replace(/[`_~>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const toggleVoice = () => { if (voiceEnabled && synth) synth.cancel(); setVoiceEnabled(!voiceEnabled); };
   const pauseVoice = () => { if (!synth) return; if (synth.speaking &&!synth.paused) synth.pause(); else synth.resume(); };
 
@@ -197,7 +205,7 @@ export default function ChatPage() {
           }
         }
       }
-      if (fullText) speak(fullText);
+      if (fullText) speak(cleanForVoice(fullText));
     } catch (e:any) {
       setMessages(m => {
         const copy = [...m];
