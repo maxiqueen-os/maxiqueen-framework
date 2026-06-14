@@ -13,29 +13,74 @@ export default function ChatPage() {
   ]);
   const [input, setInput] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceVolume, setVoiceVolume] = useState(1);
+  const [voiceRate, setVoiceRate] = useState(1);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [file, setFile] = useState<{name:string; type:string; dataUrl?:string; text?:string} | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const lastSpokenRef = useRef<string>('');
 
   const synth = typeof window!== 'undefined'? window.speechSynthesis : null;
-  const speak = useCallback((text: string) => {
-    if (!synth ||!voiceEnabled ||!text) return;
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'es-ES'; u.rate = 1.0; synth.speak(u);
-  }, [voiceEnabled, synth]);
 
   const cleanForVoice = (text: string) =>
-  text
-    .replace(/\*\*(.*?)\*\*/g, '$1')   // **negrita**
-    .replace(/\*(.*?)\*/g, '$1')       // *cursiva*
-    .replace(/#{1,6}\s/g, '')          // ### títulos
-    .replace(/[`_~>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const toggleVoice = () => { if (voiceEnabled && synth) synth.cancel(); setVoiceEnabled(!voiceEnabled); };
-  const pauseVoice = () => { if (!synth) return; if (synth.speaking &&!synth.paused) synth.pause(); else synth.resume(); };
+    text
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/#{1,6}\s/g, '')
+      .replace(/[`_~>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const speak = useCallback((text: string) => {
+    if (!synth || !voiceEnabled || !text) return;
+    synth.cancel();
+    const clean = cleanForVoice(text);
+    lastSpokenRef.current = clean;
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = 'es-ES';
+    u.rate = voiceRate;
+    u.volume = voiceVolume;
+    u.onstart = () => { setIsSpeaking(true); setIsPaused(false); };
+    u.onend = () => { setIsSpeaking(false); setIsPaused(false); };
+    u.onerror = () => { setIsSpeaking(false); setIsPaused(false); };
+    synth.speak(u);
+  }, [voiceEnabled, synth, voiceRate, voiceVolume]);
+
+  const toggleVoice = () => { 
+    if (voiceEnabled && synth) synth.cancel();
+    setVoiceEnabled(!voiceEnabled);
+    setIsSpeaking(false);
+    setIsPaused(false);
+  };
+
+  const pauseResumeVoice = () => {
+    if (!synth) return;
+    if (synth.speaking && !synth.paused) {
+      synth.pause();
+      setIsPaused(true);
+    } else if (synth.paused) {
+      synth.resume();
+      setIsPaused(false);
+    } else if (lastSpokenRef.current) {
+      // si no hay nada sonando, repite lo último
+      speak(lastSpokenRef.current);
+    }
+  };
+
+  const replayVoice = () => {
+    if (lastSpokenRef.current) {
+      speak(lastSpokenRef.current);
+    }
+  };
+
+  const stopVoice = () => {
+    if (synth) synth.cancel();
+    setIsSpeaking(false);
+    setIsPaused(false);
+  };
 
   // carga parsers
   useEffect(() => {
@@ -75,7 +120,7 @@ export default function ChatPage() {
   });
 
   const handleFile = async (f: File) => {
-    if (f.size > 10 * 1024 * 1024) { alert('Máximo 10MB'); return; }
+    if (f.size > 10 * 1024) { alert('Máximo 10MB'); return; }
     const name = f.name; const type = f.type;
 
     if (type.startsWith('image/')) {
@@ -205,7 +250,7 @@ export default function ChatPage() {
           }
         }
       }
-      if (fullText) speak(cleanForVoice(fullText));
+      if (fullText) speak(fullText);
     } catch (e:any) {
       setMessages(m => {
         const copy = [...m];
@@ -222,10 +267,10 @@ export default function ChatPage() {
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'MQ_VOICE') {
-        if (e.data.action === 'mute') { setVoiceEnabled(false); synth?.cancel(); }
+        if (e.data.action === 'mute') { setVoiceEnabled(false); stopVoice(); }
         if (e.data.action === 'unmute') setVoiceEnabled(true);
-        if (e.data.action === 'pause') synth?.pause();
-        if (e.data.action === 'resume') synth?.resume();
+        if (e.data.action === 'pause') pauseResumeVoice();
+        if (e.data.action === 'resume') pauseResumeVoice();
       }
     };
     window.addEventListener('message', handler);
@@ -247,10 +292,21 @@ export default function ChatPage() {
                 <span style={{
                   display: 'inline-block', background: m.role === 'user'? '#facc15' : '#1f1f1f',
                   color: m.role === 'user'? '#0a0a0a' : '#e5e5e5',
-                  padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap'
+                  padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap',
+                  position: 'relative'
                 }}>
                   {typeof m.content === 'string'? m.content : '[Imagen]'}
                   {m.fileMeta && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}</div>}
+                  {m.role === 'assistant' && typeof m.content === 'string' && m.content && (
+                    <button 
+                      onClick={() => speak(m.content)}
+                      title="Reproducir este mensaje"
+                      style={{ 
+                        background: 'transparent', border: 'none', color: '#facc15', 
+                        cursor: 'pointer', fontSize: 12, marginLeft: 8, opacity: 0.7 
+                      }}
+                    >🔊</button>
+                  )}
                 </span>
               </div>
             ))}
@@ -278,11 +334,27 @@ export default function ChatPage() {
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 12, marginTop: 14, fontSize: 13, color: '#9ca3af', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 12, marginTop: 14, fontSize: 13, color: '#9ca3af', flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={toggleVoice} style={{ background: 'transparent', color: '#facc15', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
-              {voiceEnabled? '🔊 Silenciar' : '🔇 Activar voz'}
+              {voiceEnabled? '🔊 Voz ON' : '🔇 Voz OFF'}
             </button>
-            <button onClick={pauseVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>⏯ Pausar</button>
+            <button onClick={pauseResumeVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+              {isSpeaking && !isPaused ? '⏸ Pausar' : '▶️ Reproducir'}
+            </button>
+            <button onClick={replayVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+              🔁 Repetir
+            </button>
+            <button onClick={stopVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+              ⏹ Detener
+            </button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Vol
+              <input type="range" min="0" max="1" step="0.05" value={voiceVolume} onChange={e => setVoiceVolume(parseFloat(e.target.value))} style={{ width: 80 }} />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Vel
+              <input type="range" min="0.5" max="2" step="0.1" value={voiceRate} onChange={e => setVoiceRate(parseFloat(e.target.value))} style={{ width: 80 }} />
+            </label>
             <span>Imágenes, PDF, Word, Excel • máx 10MB</span>
           </div>
         </div>
