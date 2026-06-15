@@ -1,7 +1,7 @@
 export const runtime = 'edge';
 
 const cors = {
-  'Access-Control-Allow-Origin': '*', // en Sprint 2 lo acotamos a tu dominio
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
@@ -10,7 +10,6 @@ export async function OPTIONS() {
   return new Response(null, { headers: cors });
 }
 
-// <-- NUEVO: solo esto se añade
 const SYSTEM_PROMPT = `Eres MaxiQueen OS, asistente de César Julio Bedoya Barragán, Cúcuta, Colombia. ORCID 0009-0004-4946-1374.
 
 MaxiQueen OS convierte ideas, historias y negocios en activos digitales rentables. JavaScript es el cuerpo, Python es la mente, tú eres la conciencia.
@@ -40,24 +39,48 @@ Framework PRO https://maxiqueen-os-framework.vercel.app
 
 Redes: TikTok @cesarbedoya9, Instagram @maxiqueen_store, Facebook /share/1DVm7tXTEm/, YouTube @cesarbedoya2288
 
-Responde en español, breve, humano. Si preguntan por comprar, manda directo a WhatsApp o Hotmart. Si te adjuntan un archivo, analízalo y da un informe estructurado.`;
+Reglas de respuesta:
+- Responde en español, breve, humano.
+- Si preguntan por comprar, manda directo a WhatsApp o Hotmart.
+- Visión / Documentos e-commerce:
+    * Describe qué ves, útil para vender. Si es producto: qué es, colores, precio sugerido, copy para Instagram.
+    * Si es comprobante/factura/tabla: transcribe números y fechas exactamente como aparecen. Respeta comas y puntos decimales. No inventes totales.
+    * Si algo es ilegible pon [ilegible]. Mantén orden de filas/columnas. Para tablas, devuelve en markdown con valores literales.
+- Si te adjuntan un archivo, analízalo y da un informe estructurado.
+`;
 
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    const cleanMessages = messages.map((m: any) => {
-      let content = m.content;
-      if (Array.isArray(content)) {
-        content = content.filter((c: any) => c.type === 'text' || c.type === 'image_url');
-      }
-      return { role: m.role, content };
-    });
+    // Limpia historial: solo user/assistant, y contenido válido para Groq
+    const cleanMessages = (messages || [])
+      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .map((m: any) => {
+        let content = m.content;
+        if (Array.isArray(content)) {
+          content = content.filter((c: any) => c.type === 'text' || c.type === 'image_url');
+        }
+        return { role: m.role, content };
+      })
+      .filter((m: any) => 
+        typeof m.content === 'string' || 
+        (Array.isArray(m.content) && m.content.length > 0)
+      );
 
-    // <-- NUEVO: anteponer el system prompt, sin duplicar si ya viene uno
-    const messagesWithSystem = cleanMessages[0]?.role === 'system'
-     ? cleanMessages
-      : [{ role: 'system', content: SYSTEM_PROMPT },...cleanMessages];
+    // ¿Hay imagen en el historial?
+    const hasVision = cleanMessages.some((m: any) => 
+      Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')
+    );
+
+    const model = hasVision 
+      ? 'meta-llama/llama-4-scout-17b-16e-instruct'
+      : 'llama-3.3-70b-versatile';
+
+    const messagesWithSystem = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...cleanMessages
+    ];
 
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -66,22 +89,21 @@ export async function POST(req: Request) {
         'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model,
         messages: messagesWithSystem,
         stream: true,
-        temperature: 0.7,
+        temperature: hasVision ? 0.4 : 0.7,
       }),
     });
 
-    if (!r.ok ||!r.body) {
+    if (!r.ok || !r.body) {
       const err = await r.text();
       return new Response(err, { status: r.status, headers: cors });
     }
 
-    // Reenvía el stream de Groq tal cual
     return new Response(r.body, {
       headers: {
-      ...cors,
+        ...cors,
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache',
       },
