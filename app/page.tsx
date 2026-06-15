@@ -23,11 +23,11 @@ export default function ChatPage() {
   const logRef = useRef<HTMLDivElement>(null);
   const lastSpokenRef = useRef<string>('');
 
-  const synth = typeof window!== 'undefined'? window.speechSynthesis : null;
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const cleanForVoice = (text: string) =>
-    text
-      .replace(/\*\*(.*?)\*\*/g, '$1')
+    text.replace(/\*\*(.*?)\*\*/g, '$1')
       .replace(/\*(.*?)\*/g, '$1')
       .replace(/#{1,6}\s/g, '')
       .replace(/[`_~>]/g, '')
@@ -40,46 +40,50 @@ export default function ChatPage() {
     const clean = cleanForVoice(text);
     lastSpokenRef.current = clean;
     const u = new SpeechSynthesisUtterance(clean);
+    utteranceRef.current = u;
     u.lang = 'es-ES';
     u.rate = voiceRate;
     u.volume = voiceVolume;
     u.onstart = () => { setIsSpeaking(true); setIsPaused(false); };
-    u.onend = () => { setIsSpeaking(false); setIsPaused(false); };
-    u.onerror = () => { setIsSpeaking(false); setIsPaused(false); };
+    u.onend = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; };
+    u.onerror = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; };
+    u.onpause = () => setIsPaused(true);
+    u.onresume = () => setIsPaused(false);
     synth.speak(u);
   }, [voiceEnabled, synth, voiceRate, voiceVolume]);
 
   const toggleVoice = () => { 
     if (voiceEnabled && synth) synth.cancel();
     setVoiceEnabled(!voiceEnabled);
-    setIsSpeaking(false);
-    setIsPaused(false);
+    setIsSpeaking(false); setIsPaused(false);
   };
 
   const pauseResumeVoice = () => {
     if (!synth) return;
     if (synth.speaking && !synth.paused) {
       synth.pause();
-      setIsPaused(true);
-    } else if (synth.paused) {
+      setTimeout(() => {
+        if (synth.speaking && !synth.paused) synth.pause();
+      }, 50);
+      return;
+    }
+    if (synth.paused) {
       synth.resume();
-      setIsPaused(false);
-    } else if (lastSpokenRef.current) {
-      // si no hay nada sonando, repite lo último
+      return;
+    }
+    if (lastSpokenRef.current && !isSpeaking) {
       speak(lastSpokenRef.current);
     }
   };
 
   const replayVoice = () => {
-    if (lastSpokenRef.current) {
-      speak(lastSpokenRef.current);
-    }
+    if (lastSpokenRef.current) speak(lastSpokenRef.current);
   };
 
   const stopVoice = () => {
     if (synth) synth.cancel();
-    setIsSpeaking(false);
-    setIsPaused(false);
+    setIsSpeaking(false); setIsPaused(false);
+    utteranceRef.current = null;
   };
 
   // carga parsers
@@ -134,7 +138,6 @@ export default function ChatPage() {
       const text = await f.text();
       setFile({ name, type, text: text.slice(0, 12000) }); return;
     }
-    // PDF
     if (type === 'application/pdf' || name.endsWith('.pdf')) {
       try {
         // @ts-ignore
@@ -156,7 +159,6 @@ export default function ChatPage() {
       setFile({ name, type, text: `PDF adjunto: ${name}. No pude extraer texto en el navegador, describe qué necesitas analizar.` });
       return;
     }
-    // DOCX
     if (name.endsWith('.docx')) {
       try {
         // @ts-ignore
@@ -168,7 +170,6 @@ export default function ChatPage() {
         }
       } catch {}
     }
-    // XLSX
     if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
       try {
         // @ts-ignore
@@ -275,7 +276,7 @@ export default function ChatPage() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [synth]);
+  }, [pauseResumeVoice, stopVoice]);
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
@@ -339,7 +340,7 @@ export default function ChatPage() {
               {voiceEnabled? '🔊 Voz ON' : '🔇 Voz OFF'}
             </button>
             <button onClick={pauseResumeVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
-              {isSpeaking && !isPaused ? '⏸ Pausar' : '▶️ Reproducir'}
+              {isSpeaking && !isPaused ? '⏸ Pausar' : '▶ Reproducir'}
             </button>
             <button onClick={replayVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               🔁 Repetir
