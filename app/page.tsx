@@ -366,3 +366,20 @@ export default function ChatPage() {
     </div>
   );
 }
+
+
+<div class="mq-character" id="mqAvatar" data-state="idle">
+  <div class="mq-ears"><div class="ear left"></div><div class="ear right"></div></div>
+  <div class="mq-head">
+    <div class="mq-visor"></div>
+    <div class="mq-mouth"></div>
+    <div class="mq-whiskers left"><span></span><span></span></div>
+    <div class="mq-whiskers right"><span></span><span></span></div>
+  </div>
+  <div class="mq-body"></div>
+  <div class="mq-feet"><div class="foot"></div><div class="foot"></div></div>
+</div>
+<script>
+  const mq = new MqAvatar(document.getElementById('mqAvatar'));
+  // mq.greet(); // descomenta para saludo automático
+</script>
