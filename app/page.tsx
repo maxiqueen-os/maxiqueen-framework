@@ -22,6 +22,7 @@ export default function ChatPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const lastSpokenRef = useRef<string>('');
+  const avatarRef = useRef<HTMLDivElement>(null);
 
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -34,6 +35,10 @@ export default function ChatPage() {
       .replace(/\s+/g, ' ')
       .trim();
 
+  const setAvatarState = (state: string) => {
+    if (avatarRef.current) avatarRef.current.setAttribute('data-state', state);
+  };
+
   const speak = useCallback((text: string) => {
     if (!synth || !voiceEnabled || !text) return;
     synth.cancel();
@@ -44,11 +49,11 @@ export default function ChatPage() {
     u.lang = 'es-ES';
     u.rate = voiceRate;
     u.volume = voiceVolume;
-    u.onstart = () => { setIsSpeaking(true); setIsPaused(false); };
-    u.onend = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; };
-    u.onerror = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; };
-    u.onpause = () => setIsPaused(true);
-    u.onresume = () => setIsPaused(false);
+    u.onstart = () => { setIsSpeaking(true); setIsPaused(false); setAvatarState('talking'); };
+    u.onend = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; setAvatarState('idle'); };
+    u.onerror = () => { setIsSpeaking(false); setIsPaused(false); utteranceRef.current = null; setAvatarState('idle'); };
+    u.onpause = () => { setIsPaused(true); setAvatarState('paused'); };
+    u.onresume = () => { setIsPaused(false); setAvatarState('talking'); };
     synth.speak(u);
   }, [voiceEnabled, synth, voiceRate, voiceVolume]);
 
@@ -56,6 +61,7 @@ export default function ChatPage() {
     if (voiceEnabled && synth) synth.cancel();
     setVoiceEnabled(!voiceEnabled);
     setIsSpeaking(false); setIsPaused(false);
+    setAvatarState('idle');
   };
 
   const pauseResumeVoice = () => {
@@ -84,6 +90,7 @@ export default function ChatPage() {
     if (synth) synth.cancel();
     setIsSpeaking(false); setIsPaused(false);
     utteranceRef.current = null;
+    setAvatarState('idle');
   };
 
   // carga parsers
@@ -188,11 +195,12 @@ export default function ChatPage() {
   };
 
   const send = async () => {
-    if ((!input.trim() &&!file) || loading) return;
+    if ((!input.trim() && !file) || loading) return;
 
     const displayText = input || `📎 ${file?.name}`;
-    const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file? { name: file.name, type: file.type } : undefined };
+    const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file ? { name: file.name, type: file.type } : undefined };
     setMessages(m => [...m, userMsg]);
+    setAvatarState('thinking');
 
     let apiContent: any = input || `Analiza el archivo ${file?.name}`;
     if (file?.dataUrl) {
@@ -216,7 +224,7 @@ export default function ChatPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: apiMessages })
       });
-      if (!r.ok ||!r.body) throw new Error(await r.text());
+      if (!r.ok || !r.body) throw new Error(await r.text());
 
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
@@ -252,12 +260,14 @@ export default function ChatPage() {
         }
       }
       if (fullText) speak(fullText);
+      else setAvatarState('idle');
     } catch (e:any) {
       setMessages(m => {
         const copy = [...m];
         copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión con Groq: ' + String(e.message || e) };
         return copy;
       });
+      setAvatarState('error');
     } finally {
       setLoading(false);
     }
@@ -286,17 +296,33 @@ export default function ChatPage() {
           <p style={{ color: '#9ca3af', marginTop: 8 }}>ARQUITECTURA DIGITAL INCORRUPTIBLE</p>
           <p style={{ color: '#facc15', fontSize: 12 }}>INTELIGENCIA LOCAL • ÉLITE ESTRATÉGICA</p>
         </div>
+
+        {/* CHAR DE MAXIQUEEN */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
+          <div ref={avatarRef} className="mq-character" id="mqAvatar" data-state="idle">
+            <div className="mq-ears"><div className="ear left"></div><div className="ear right"></div></div>
+            <div className="mq-head">
+              <div className="mq-visor"></div>
+              <div className="mq-mouth"></div>
+              <div className="mq-whiskers left"><span></span><span></span></div>
+              <div className="mq-whiskers right"><span></span><span></span></div>
+            </div>
+            <div className="mq-body"></div>
+            <div className="mq-feet"><div className="foot"></div><div className="foot"></div></div>
+          </div>
+        </div>
+
         <div style={{ background: '#141414', border: '1px solid #262626', borderRadius: 16, padding: 20 }}>
           <div ref={logRef} style={{ height: 380, overflowY: 'auto', marginBottom: 16 }}>
             {messages.map((m, i) => (
-              <div key={i} style={{ marginBottom: 14, textAlign: m.role === 'user'? 'right' : 'left' }}>
+              <div key={i} style={{ marginBottom: 14, textAlign: m.role === 'user' ? 'right' : 'left' }}>
                 <span style={{
-                  display: 'inline-block', background: m.role === 'user'? '#facc15' : '#1f1f1f',
-                  color: m.role === 'user'? '#0a0a0a' : '#e5e5e5',
+                  display: 'inline-block', background: m.role === 'user' ? '#facc15' : '#1f1f1f',
+                  color: m.role === 'user' ? '#0a0a0a' : '#e5e5e5',
                   padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap',
                   position: 'relative'
                 }}>
-                  {typeof m.content === 'string'? m.content : '[Imagen]'}
+                  {typeof m.content === 'string' ? m.content : '[Imagen]'}
                   {m.fileMeta && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}</div>}
                   {m.role === 'assistant' && typeof m.content === 'string' && m.content && (
                     <button 
@@ -326,18 +352,18 @@ export default function ChatPage() {
               onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
             <button onClick={() => fileRef.current?.click()}
               style={{ background: '#1f1f1f', color: '#e5e5e5', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>📎</button>
-            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' &&!e.shiftKey && (e.preventDefault(), send())}
+            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
               placeholder="Escribe o adjunta un archivo..."
               style={{ flex: 1, background: '#0a0a0a', color: '#fff', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', outline: 'none' }} />
             <button onClick={send} disabled={loading}
-              style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer', opacity: loading? 0.6 : 1 }}>
+              style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer', opacity: loading ? 0.6 : 1 }}>
               Enviar
             </button>
           </div>
 
           <div style={{ display: 'flex', gap: 12, marginTop: 14, fontSize: 13, color: '#9ca3af', flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={toggleVoice} style={{ background: 'transparent', color: '#facc15', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
-              {voiceEnabled? '🔊 Voz ON' : '🔇 Voz OFF'}
+              {voiceEnabled ? '🔊 Voz ON' : '🔇 Voz OFF'}
             </button>
             <button onClick={pauseResumeVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               {isSpeaking && !isPaused ? '⏸ Pausar' : '▶ Reproducir'}
@@ -366,20 +392,3 @@ export default function ChatPage() {
     </div>
   );
 }
-
-
-<div class="mq-character" id="mqAvatar" data-state="idle">
-  <div class="mq-ears"><div class="ear left"></div><div class="ear right"></div></div>
-  <div class="mq-head">
-    <div class="mq-visor"></div>
-    <div class="mq-mouth"></div>
-    <div class="mq-whiskers left"><span></span><span></span></div>
-    <div class="mq-whiskers right"><span></span><span></span></div>
-  </div>
-  <div class="mq-body"></div>
-  <div class="mq-feet"><div class="foot"></div><div class="foot"></div></div>
-</div>
-<script>
-  const mq = new MqAvatar(document.getElementById('mqAvatar'));
-  // mq.greet(); // descomenta para saludo automático
-</script>
