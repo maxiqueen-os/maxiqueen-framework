@@ -1,4 +1,4 @@
-export const runtime = 'edge';
+export const runtime = 'nodejs'; // <-- ESTA ES LA LÍNEA QUE CAMBIAS
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
