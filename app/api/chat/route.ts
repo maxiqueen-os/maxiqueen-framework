@@ -1,4 +1,4 @@
-export const runtime = 'edge'; // <-- ESTA ES LA LÍNEA QUE CAMBIAS
+export const runtime = 'edge';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -49,65 +49,177 @@ Reglas de respuesta:
 - Si te adjuntan un archivo, analízalo y da un informe estructurado.
 `;
 
+const GEMINI_KEYS = [
+  process.env.GEMINI_API_KEY_1,
+  process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
+].filter(Boolean);
+
+const GEMINI_MODELS = [
+  'gemini-2.0-flash-exp', // Gemini 3 experimental
+  'gemini-1.5-pro-latest',
+  'gemini-1.5-flash-latest',
+  'gemini-pro'
+];
+
+const GROQ_KEY = process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY;
+
+function toGeminiContents(messages: any[]) {
+  return messages.map((m: any) => ({
+    role: m.role === 'assistant'? 'model' : 'user',
+    parts: Array.isArray(m.content)
+     ? m.content.map((c: any) =>
+          c.type === 'text'
+           ? { text: c.text }
+            : { inline_data: { mime_type: 'image/jpeg', data: c.image_url.url.split(',')[1] } }
+        )
+      : [{ text: m.content }]
+  }));
+}
+
+function toGroqMessages(messages: any[]) {
+  return messages.map((m: any) => ({
+    role: m.role,
+    content: typeof m.content === 'string'
+     ? m.content
+      : m.content.find((c: any) => c.type === 'text')?.text || 'Analiza la imagen adjunta'
+  }));
+}
+
+async function tryGemini(model: string, apiKey: string, messages: any[]) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${apiKey}&alt=sse`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: toGeminiContents(messages) })
+  });
+
+  if (!res.ok) throw new Error(`Gemini ${model} ${res.status}`);
+  return res;
+}
+
+async function tryGroq(messages: any[], hasVision: boolean) {
+  const model = hasVision
+   ? 'meta-llama/llama-4-scout-17b-16e-instruct'
+    : 'llama-3.3-70b-versatile';
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      messages: toGroqMessages(messages),
+      stream: true,
+      temperature: hasVision? 0.4 : 0.7,
+    })
+  });
+
+  if (!res.ok) throw new Error(`Groq ${res.status}`);
+  return res;
+}
+
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    // Limpia historial: solo user/assistant, y contenido válido para Groq
     const cleanMessages = (messages || [])
-      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .map((m: any) => {
+     .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+     .map((m: any) => {
         let content = m.content;
         if (Array.isArray(content)) {
           content = content.filter((c: any) => c.type === 'text' || c.type === 'image_url');
         }
         return { role: m.role, content };
       })
-      .filter((m: any) => 
-        typeof m.content === 'string' || 
+     .filter((m: any) =>
+        typeof m.content === 'string' ||
         (Array.isArray(m.content) && m.content.length > 0)
       );
 
-    // ¿Hay imagen en el historial?
-    const hasVision = cleanMessages.some((m: any) => 
+    const hasVision = cleanMessages.some((m: any) =>
       Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')
     );
 
-    const model = hasVision 
-      ? 'meta-llama/llama-4-scout-17b-16e-instruct'
-      : 'llama-3.3-70b-versatile';
-
     const messagesWithSystem = [
       { role: 'system', content: SYSTEM_PROMPT },
-      ...cleanMessages
+     ...cleanMessages
     ];
 
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: messagesWithSystem,
-        stream: true,
-        temperature: hasVision ? 0.4 : 0.7,
-      }),
-    });
+    // 1. Cascada Gemini: 4 modelos x 3 keys = 12 intentos
+    for (const model of GEMINI_MODELS) {
+      for (const apiKey of GEMINI_KEYS) {
+        try {
+          const geminiRes = await tryGemini(model, apiKey, messagesWithSystem);
 
-    if (!r.ok || !r.body) {
-      const err = await r.text();
-      return new Response(err, { status: r.status, headers: cors });
+          // Convertir SSE de Gemini a formato OpenAI que usa tu frontend
+          const stream = new ReadableStream({
+            async start(controller) {
+              const reader = geminiRes.body!.getReader();
+              const decoder = new TextDecoder();
+              let buffer = '';
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  const data = line.slice(6);
+                  try {
+                    const json = JSON.parse(data);
+                    const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (text) {
+                      const chunk = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+                      controller.enqueue(new TextEncoder().encode(chunk));
+                    }
+                  } catch {}
+                }
+              }
+              controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+              controller.close();
+            }
+          });
+
+          return new Response(stream, {
+            headers: {
+             ...cors,
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache',
+            }
+          });
+
+        } catch (e) {
+          console.log(`[FAIL] ${model} key ending ${apiKey.slice(-4)}:`, e);
+          continue;
+        }
+      }
     }
 
-    return new Response(r.body, {
-      headers: {
-        ...cors,
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache',
-      },
-    });
+    // 2. Fallback Groq si todos los Gemini fallan
+    if (GROQ_KEY) {
+      try {
+        const groqRes = await tryGroq(messagesWithSystem, hasVision);
+        return new Response(groqRes.body, {
+          headers: {
+           ...cors,
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache',
+          }
+        });
+      } catch (e) {
+        console.log('[FAIL] Groq:', e);
+      }
+    }
+
+    return new Response('Todos los modelos fallaron', { status: 500, headers: cors });
+
   } catch (e: any) {
     return new Response(String(e.message || e), { status: 500, headers: cors });
   }
