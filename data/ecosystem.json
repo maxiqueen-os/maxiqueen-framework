@@ -1,0 +1,76 @@
+{
+  "modules": [
+    {
+      "name": "maxiqueen-os",
+      "repo": "maxiqueen_os",
+      "tier": "CORE",
+      "role": "ENTRY_POINT",
+      "critical": true
+    },
+    {
+      "name": "maxiqueen-os-v2",
+      "repo": "MAXIQUEEN_WEB_V2",
+      "tier": "PRODUCT",
+      "role": "UI_LAYER",
+      "dependsOn": ["backend-maxi-queen-os"]
+    },
+    {
+      "name": "maxiqueen-os-perfil",
+      "repo": "maxiqueen-os-app",
+      "tier": "PRODUCT",
+      "role": "AUTH_LAYER",
+      "dependsOn": ["backend-maxi-queen-os"]
+    },
+    {
+      "name": "backend-maxi-queen-os",
+      "repo": "Backend_MQ",
+      "tier": "SERVICE",
+      "role": "API_GATEWAY",
+      "critical": true
+    },
+    {
+      "name": "maxiqueen-os-framework",
+      "repo": "maxiqueen-framework",
+      "tier": "MODULE",
+      "role": "UI_FRAMEWORK"
+    },
+    {
+      "name": "nextjs-wiia",
+      "repo": "maxiqueen_os-agents",
+      "tier": "MODULE",
+      "role": "AI_AGENT",
+      "dependsOn": ["backend-maxi-queen-os"]
+    },
+    {
+      "name": "nextjs-m162",
+      "repo": "maxiqueen_os-agents",
+      "tier": "MODULE",
+      "role": "AI_AGENT_BACKUP",
+      "dependsOn": ["backend-maxi-queen-os"]
+    },
+    {
+      "name": "system-maxi-queen-os",
+      "repo": "System-MaxiQueen_OS",
+      "tier": "LAB",
+      "role": "DOCUMENTATION"
+    },
+    {
+      "name": "juegos-maxi-queen-os",
+      "repo": "maxiqueenos-play",
+      "tier": "LAB",
+      "role": "SANDBOX_GAME"
+    },
+    {
+      "name": "maxiqueen-ver",
+      "repo": "maxiqueen-ver",
+      "tier": "LAB",
+      "role": "EXPERIMENTAL_UI"
+    },
+    {
+      "name": "maxiqueen-os-play",
+      "repo": "maxiqueenos-play",
+      "tier": "LAB",
+      "role": "PLAYGROUND"
+    }
+  ]
+}
