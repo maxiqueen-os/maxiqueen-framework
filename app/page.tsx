@@ -18,7 +18,7 @@ export default function ChatPage() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [file, setFile] = useState<{name:string; type:string; dataUrl?:string; text?:string} | null>(null);
+  const [file, setFile] = useState<{name: string; type: string; dataUrl?: string; text?: string} | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const lastSpokenRef = useRef<string>('');
@@ -39,9 +39,24 @@ export default function ChatPage() {
     if (avatarRef.current) avatarRef.current.setAttribute('data-state', state);
   };
 
+  // PARCHE 4: Evitar fugas de memoria (Speech Leak) limpiando manejadores antes de cancelar
+  const cancelSpeech = useCallback(() => {
+    if (synth) {
+      if (utteranceRef.current) {
+        utteranceRef.current.onstart = null;
+        utteranceRef.current.onend = null;
+        utteranceRef.current.onerror = null;
+        utteranceRef.current.onpause = null;
+        utteranceRef.current.onresume = null;
+      }
+      synth.cancel();
+    }
+  }, [synth]);
+
   const speak = useCallback((text: string) => {
     if (!synth || !voiceEnabled || !text) return;
-    synth.cancel();
+    cancelSpeech();
+    
     const clean = cleanForVoice(text);
     lastSpokenRef.current = clean;
     const u = new SpeechSynthesisUtterance(clean);
@@ -55,16 +70,16 @@ export default function ChatPage() {
     u.onpause = () => { setIsPaused(true); setAvatarState('paused'); };
     u.onresume = () => { setIsPaused(false); setAvatarState('talking'); };
     synth.speak(u);
-  }, [voiceEnabled, synth, voiceRate, voiceVolume]);
+  }, [voiceEnabled, synth, voiceRate, voiceVolume, cancelSpeech]);
 
   const toggleVoice = () => { 
-    if (voiceEnabled && synth) synth.cancel();
+    if (voiceEnabled) cancelSpeech();
     setVoiceEnabled(!voiceEnabled);
     setIsSpeaking(false); setIsPaused(false);
     setAvatarState('idle');
   };
 
-  const pauseResumeVoice = () => {
+  const pauseResumeVoice = useCallback(() => {
     if (!synth) return;
     if (synth.speaking && !synth.paused) {
       synth.pause();
@@ -80,20 +95,20 @@ export default function ChatPage() {
     if (lastSpokenRef.current && !isSpeaking) {
       speak(lastSpokenRef.current);
     }
-  };
+  }, [synth, isSpeaking, speak]);
 
   const replayVoice = () => {
     if (lastSpokenRef.current) speak(lastSpokenRef.current);
   };
 
-  const stopVoice = () => {
-    if (synth) synth.cancel();
+  const stopVoice = useCallback(() => {
+    cancelSpeech();
     setIsSpeaking(false); setIsPaused(false);
     utteranceRef.current = null;
     setAvatarState('idle');
-  };
+  }, [cancelSpeech]);
 
-  // carga parsers
+  // Carga asíncrona de parsers externos
   useEffect(() => {
     const load = (src: string) => new Promise<void>(res => { const s = document.createElement('script'); s.src = src; s.onload = () => res(); s.onerror = () => res(); document.head.appendChild(s); });
     (async () => {
@@ -153,11 +168,12 @@ export default function ChatPage() {
           const buf = await f.arrayBuffer();
           const pdf = await pdfjs.getDocument({ data: buf }).promise;
           let out = '';
-          const pages = Math.min(pdf.numPages, 10);
+          // PARCHE 5: Reducir escaneo de PDF de 10 a un máximo estable de 5 páginas
+          const pages = Math.min(pdf.numPages, 5);
           for (let i = 1; i <= pages; i++) {
             const page = await pdf.getPage(i);
             const tc = await page.getTextContent();
-            out += tc.items.map((it:any) => it.str).join(' ') + '\n\n';
+            out += tc.items.map((it: any) => it.str).join(' ') + '\n\n';
             if (out.length > 12000) break;
           }
           setFile({ name, type, text: out.slice(0, 12000) }); return;
@@ -184,8 +200,8 @@ export default function ChatPage() {
         if (XLSX) {
           const buf = await f.arrayBuffer();
           const wb = XLSX.read(buf); let out = '';
-          wb.SheetNames.slice(0,3).forEach((n:string) => {
-            out += `\n=== ${n} ===\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0,5000);
+          wb.SheetNames.slice(0, 3).forEach((n: string) => {
+            out += `\n=== ${n} ===\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0, 5000);
           });
           setFile({ name, type, text: out.slice(0, 12000) }); return;
         }
@@ -199,7 +215,9 @@ export default function ChatPage() {
 
     const displayText = input || `📎 ${file?.name}`;
     const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file ? { name: file.name, type: file.type } : undefined };
-    setMessages(m => [...m, userMsg]);
+    
+    // Almacenamos el historial previo actualizado para cálculos posteriores
+    const updatedMessages = [...messages, userMsg];
     setAvatarState('thinking');
 
     let apiContent: any = input || `Analiza el archivo ${file?.name}`;
@@ -212,11 +230,17 @@ export default function ChatPage() {
       apiContent = `Archivo: ${file.name}\n\n${file.text}\n\nInstrucción: ${input || 'Genera un informe estructurado.'}`;
     }
 
+    // PARCHE 1: Limitar el historial real enviado al backend a los últimos 15 mensajes (.slice(-15))
     const apiMessages = [...messages, { role: 'user', content: apiContent }]
-     .map(m => ({ role: m.role, content: m.content }));
+      .slice(-15)
+      .map(m => ({ role: m.role, content: m.content }));
 
-    setInput(''); setFile(null); setLoading(true);
-    setMessages(m => [...m, { role: 'assistant', content: '' }]);
+    setInput(''); 
+    setFile(null); 
+    setLoading(true);
+
+    // PARCHE 6: Evitar doble render o parpadeos combinando de forma atómica el mensaje de usuario y el esqueleto de respuesta
+    setMessages([...updatedMessages, { role: 'assistant', content: '' }]);
 
     try {
       const r = await fetch('/api/chat', {
@@ -230,6 +254,9 @@ export default function ChatPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
+      
+      // Control de fotograma para throttling del stream
+      let frameRequested = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -249,22 +276,46 @@ export default function ChatPage() {
               const delta = json.choices?.[0]?.delta?.content || '';
               if (delta) {
                 fullText += delta;
-                setMessages(m => {
-                  const copy = [...m];
-                  copy[copy.length - 1] = { role: 'assistant', content: fullText };
-                  return copy;
-                });
+
+                // PARCHE 2: Buffer asíncrono con requestAnimationFrame para evitar re-renders masivos por token
+                if (!frameRequested) {
+                  frameRequested = true;
+                  requestAnimationFrame(() => {
+                    setMessages(m => {
+                      const copy = [...m];
+                      if (copy.length > 0) {
+                        copy[copy.length - 1] = { role: 'assistant', content: fullText };
+                      }
+                      return copy;
+                    });
+                    frameRequested = false;
+                  });
+                }
               }
             } catch {}
           }
         }
       }
+      
+      // Actualización final atómica para cerciorar que el flujo de texto termina completo
+      requestAnimationFrame(() => {
+        setMessages(m => {
+          const copy = [...m];
+          if (copy.length > 0) {
+            copy[copy.length - 1] = { role: 'assistant', content: fullText };
+          }
+          return copy;
+        });
+      });
+
       if (fullText) speak(fullText);
       else setAvatarState('idle');
-    } catch (e:any) {
+    } catch (e: any) {
       setMessages(m => {
         const copy = [...m];
-        copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión con Groq: ' + String(e.message || e) };
+        if (copy.length > 0) {
+          copy[copy.length - 1] = { role: 'assistant', content: 'Error de conexión: ' + String(e.message || e) };
+        }
         return copy;
       });
       setAvatarState('error');
@@ -277,6 +328,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      // PARCHE 3: Validar el origen exacto del evento de ventana para evitar brechas XSS / inyecciones externas
+      if (typeof window !== 'undefined' && e.origin !== window.location.origin) return;
+
       if (e.data?.type === 'MQ_VOICE') {
         if (e.data.action === 'mute') { setVoiceEnabled(false); stopVoice(); }
         if (e.data.action === 'unmute') setVoiceEnabled(true);
@@ -297,7 +351,7 @@ export default function ChatPage() {
           <p style={{ color: '#facc15', fontSize: 12 }}>INTELIGENCIA LOCAL • ÉLITE ESTRATÉGICA</p>
         </div>
 
-        {/* CHAR DE MAXIQUEEN */}
+        {/* CHARACTER DE MAXIQUEEN */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
           <div ref={avatarRef} className="mq-character" id="mqAvatar" data-state="idle">
             <div className="mq-ears"><div className="ear left"></div><div className="ear right"></div></div>
@@ -323,7 +377,7 @@ export default function ChatPage() {
                   position: 'relative'
                 }}>
                   {typeof m.content === 'string' ? m.content : '[Imagen]'}
-                  {m.fileMeta && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}</div>}
+                  {m.fileMeta && \<div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}\</div>}
                   {m.role === 'assistant' && typeof m.content === 'string' && m.content && (
                     <button 
                       onClick={() => speak(m.content)}
