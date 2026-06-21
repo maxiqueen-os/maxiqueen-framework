@@ -1,10 +1,13 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+// Se agrega 'fileText' al tipo para retener el texto extraído del PDF/Docs en el historial
 type Msg = {
   role: 'user' | 'assistant';
   content: any;
   fileMeta?: { name: string; type: string };
+  dataUrl?: string;
+  fileText?: string; 
 };
 
 export default function ChatPage() {
@@ -39,7 +42,6 @@ export default function ChatPage() {
     if (avatarRef.current) avatarRef.current.setAttribute('data-state', state);
   };
 
-  // PARCHE 4: Evitar fugas de memoria (Speech Leak) limpiando manejadores antes de cancelar
   const cancelSpeech = useCallback(() => {
     if (synth) {
       if (utteranceRef.current) {
@@ -108,7 +110,6 @@ export default function ChatPage() {
     setAvatarState('idle');
   }, [cancelSpeech]);
 
-  // Carga asíncrona de parsers externos
   useEffect(() => {
     const load = (src: string) => new Promise<void>(res => { const s = document.createElement('script'); s.src = src; s.onload = () => res(); s.onerror = () => res(); document.head.appendChild(s); });
     (async () => {
@@ -168,7 +169,6 @@ export default function ChatPage() {
           const buf = await f.arrayBuffer();
           const pdf = await pdfjs.getDocument({ data: buf }).promise;
           let out = '';
-          // PARCHE 5: Reducir escaneo de PDF de 10 a un máximo estable de 5 páginas
           const pages = Math.min(pdf.numPages, 5);
           for (let i = 1; i <= pages; i++) {
             const page = await pdf.getPage(i);
@@ -214,32 +214,79 @@ export default function ChatPage() {
     if ((!input.trim() && !file) || loading) return;
 
     const displayText = input || `📎 ${file?.name}`;
-    const userMsg: Msg = { role: 'user', content: displayText, fileMeta: file ? { name: file.name, type: file.type } : undefined };
     
-    // Almacenamos el historial previo actualizado para cálculos posteriores
+    // Almacenamos el texto extraído (si es PDF/Docs) o la dataUrl (si es imagen) de forma consistente
+    const userMsg: Msg = { 
+      role: 'user', 
+      content: displayText, 
+      fileMeta: file ? { name: file.name, type: file.type } : undefined,
+      dataUrl: file?.dataUrl,
+      fileText: file?.text
+    };
+    
     const updatedMessages = [...messages, userMsg];
     setAvatarState('thinking');
 
-    let apiContent: any = input || `Analiza el archivo ${file?.name}`;
-    if (file?.dataUrl) {
-      apiContent = [
-        { type: 'text', text: input || `Analiza esta imagen (${file.name}).` },
-        { type: 'image_url', image_url: { url: file.dataUrl } }
-      ];
-    } else if (file?.text) {
-      apiContent = `Archivo: ${file.name}\n\n${file.text}\n\nInstrucción: ${input || 'Genera un informe estructurado.'}`;
-    }
-
-    // PARCHE 1: Limitar el historial real enviado al backend a los últimos 15 mensajes (.slice(-15))
-    const apiMessages = [...messages, { role: 'user', content: apiContent }]
+    // Procesamos todos los mensajes que irán a la API
+    const apiMessages = updatedMessages
       .slice(-15)
-      .map(m => ({ role: m.role, content: m.content }));
+      .map(m => {
+        const msg: any = { role: m.role };
+        
+        if (m.role === 'assistant') {
+          msg.content = m.content;
+          msg.parts = [{ text: m.content }];
+          return msg;
+        }
+
+        // Si el mensaje del usuario tiene una imagen
+        if (m.dataUrl) {
+          // Si el texto es solo el placeholder del archivo, le asignamos una pregunta genérica para el LLM
+          const isPlaceholder = typeof m.content === 'string' && m.content.startsWith('📎');
+          const textStr = isPlaceholder 
+            ? `Analiza esta imagen (${m.fileMeta?.name || 'imagen'}).` 
+            : (typeof m.content === 'string' ? m.content : 'Analiza esta imagen.');
+
+          // Formato estándar para OpenAI, Anthropic y Vercel AI SDK Core
+          msg.content = [
+            { type: 'text', text: textStr },
+            { type: 'image_url', image_url: { url: m.dataUrl } }
+          ];
+          
+          // Formato compatible para SDK de Google Gemini nativo (inlineData)
+          const base64Data = m.dataUrl.split(',')[1] || '';
+          msg.parts = [
+            { text: textStr },
+            { inlineData: { mimeType: m.fileMeta?.type || 'image/jpeg', data: base64Data } }
+          ];
+          
+          // Formato experimental para compatibilidad con Vercel AI attachments
+          msg.experimental_attachments = [
+            { name: m.fileMeta?.name || 'image.jpg', contentType: m.fileMeta?.type || 'image/jpeg', url: m.dataUrl }
+          ];
+          msg.attachments = msg.experimental_attachments;
+
+        } else if (m.fileText) {
+          // Si tiene texto extraído (PDF, DOCX, XLSX, TXT)
+          const isPlaceholder = typeof m.content === 'string' && m.content.startsWith('📎');
+          const instruction = isPlaceholder ? 'Genera un informe estructurado o responde a mis dudas.' : m.content;
+          
+          const textStr = `Archivo: ${m.fileMeta?.name || 'documento'}\n\n${m.fileText}\n\nInstrucción: ${instruction}`;
+          msg.content = textStr;
+          msg.parts = [{ text: textStr }];
+        } else {
+          // Mensaje de texto plano estándar
+          msg.content = m.content;
+          msg.parts = [{ text: typeof m.content === 'string' ? m.content : String(m.content) }];
+        }
+        return msg;
+      });
 
     setInput(''); 
     setFile(null); 
     setLoading(true);
 
-    // PARCHE 6: Evitar doble render o parpadeos combinando de forma atómica el mensaje de usuario y el esqueleto de respuesta
+    // Combinación atómica del mensaje del usuario y esqueleto del asistente
     setMessages([...updatedMessages, { role: 'assistant', content: '' }]);
 
     try {
@@ -254,8 +301,6 @@ export default function ChatPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
-      
-      // Control de fotograma para throttling del stream
       let frameRequested = false;
 
       while (true) {
@@ -277,7 +322,6 @@ export default function ChatPage() {
               if (delta) {
                 fullText += delta;
 
-                // PARCHE 2: Buffer asíncrono con requestAnimationFrame para evitar re-renders masivos por token
                 if (!frameRequested) {
                   frameRequested = true;
                   requestAnimationFrame(() => {
@@ -297,7 +341,6 @@ export default function ChatPage() {
         }
       }
       
-      // Actualización final atómica para cerciorar que el flujo de texto termina completo
       requestAnimationFrame(() => {
         setMessages(m => {
           const copy = [...m];
@@ -328,7 +371,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      // PARCHE 3: Validar el origen exacto del evento de ventana para evitar brechas XSS / inyecciones externas
       if (typeof window !== 'undefined' && e.origin !== window.location.origin) return;
 
       if (e.data?.type === 'MQ_VOICE') {
@@ -374,10 +416,18 @@ export default function ChatPage() {
                   display: 'inline-block', background: m.role === 'user' ? '#facc15' : '#1f1f1f',
                   color: m.role === 'user' ? '#0a0a0a' : '#e5e5e5',
                   padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap',
-                  position: 'relative'
+                  position: 'relative', textAlign: 'left'
                 }}>
+                  {/* Vista previa de imagen si el mensaje contiene una */}
+                  {m.dataUrl && (
+                    <img 
+                      src={m.dataUrl} 
+                      alt="Adjunto" 
+                      style={{ maxWidth: '100%', maxHeight: 200, borderRadius: 8, display: 'block', marginBottom: 8 }} 
+                    />
+                  )}
                   {typeof m.content === 'string' ? m.content : '[Imagen]'}
-                  {m.fileMeta && \<div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}\</div>}
+                  {m.fileMeta && !m.dataUrl && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>📎 {m.fileMeta.name}</div>}
                   {m.role === 'assistant' && typeof m.content === 'string' && m.content && (
                     <button 
                       onClick={() => speak(m.content)}
@@ -395,8 +445,15 @@ export default function ChatPage() {
           </div>
 
           {file && (
-            <div style={{ background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', marginBottom: 8, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
-              <span>📎 {file.name}</span>
+            <div style={{ background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', marginBottom: 8, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {file.dataUrl ? (
+                  <img src={file.dataUrl} alt="Miniatura" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover' }} />
+                ) : (
+                  <span>📎</span>
+                )}
+                <span>{file.name}</span>
+              </div>
               <button onClick={() => setFile(null)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}>✕</button>
             </div>
           )}
