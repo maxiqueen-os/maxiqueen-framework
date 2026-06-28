@@ -12,7 +12,7 @@ type Msg = {
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([
-    { role: 'assistant', content: 'Soy MaxiQueen OS, inteligencia local. ¿En qué te ayudo hoy? Puedes adjuntar imágenes, PDF, Word o Excel.' }
+    { role: 'assistant', content: 'Soy Auditor Financiero IA. Súbeme extractos, facturas en PDF o tu Excel y te devuelvo el diagnóstico hablado en segundos. ¿Qué revisamos hoy?' }
   ]);
   const [input, setInput] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -388,8 +388,8 @@ export default function ChatPage() {
     <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '40px 20px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <h1 style={{ fontSize: 42, fontWeight: 800, letterSpacing: 2, color: '#facc15', margin: 0 }}>MAXIQUEEN OS</h1>
-          <p style={{ color: '#9ca3af', marginTop: 8 }}>ARQUITECTURA DIGITAL INCORRUPTIBLE</p>
+          <h1 style={{ fontSize: 42, fontWeight: 800, letterSpacing: 2, color: '#facc15', margin: 0 }}>AUDITOR FINANCIERO IA</h1>
+          <p style={{ color: '#9ca3af', marginTop: 8 }}>MAXIQUEEN OS</p>
           <p style={{ color: '#facc15', fontSize: 12 }}>INTELIGENCIA LOCAL • ÉLITE ESTRATÉGICA</p>
         </div>
 
