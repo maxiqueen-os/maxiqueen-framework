@@ -385,17 +385,15 @@ export default function ChatPage() {
   }, [pauseResumeVoice, stopVoice]);
 
 return (
-    <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: '40px 20px' }}>
+    <div style={{ minHeight: '100vh', background: '#020617', color: '#e5e5e5', fontFamily: 'system-ui, Inter, sans-serif' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <h1 style={{ fontSize: 42, fontWeight: 800, letterSpacing: 2, color: '#facc15', margin: 0 }}>AUDITOR FINANCIERO IA</h1>
-          {/* CAMBIO 1: texto del subtítulo */}
-          <p style={{ color: '#9ca3af', marginTop: 8 }}>CONTROL TOTAL DE FLUJO Y RIESGO</p>
-          {/* CAMBIO 2: texto del tag */}
-          <p style={{ color: '#facc15', fontSize: 12 }}>ANÁLISIS LOCAL • EXCEL • PDF</p>
+          <h1 style={{ fontSize: 46, fontWeight: 800, letterSpacing: 1.5, color: '#22c55e', margin: 0 }}>AUDITOR FINANCIERO IA</h1>
+          <p style={{ color: '#94a3b8', marginTop: 8 }}>CONTROL TOTAL DE FLUJO Y RIESGO</p>
+          <p style={{ color: '#22c55e', fontSize: 12, fontWeight: 600 }}>ANÁLISIS LOCAL • EXCEL • PDF</p>
         </div>
 
-        {/* CHARACTER DE MAXIQUEEN */}
+        {/* CHARACTER DE MAXIQUEEN - lo dejamos igual, funciona */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
           <div ref={avatarRef} className="mq-character" id="mqAvatar" data-state="idle">
             <div className="mq-ears"><div className="ear left"></div><div className="ear right"></div></div>
@@ -410,17 +408,17 @@ return (
           </div>
         </div>
 
-        <div style={{ background: '#141414', border: '1px solid #262626', borderRadius: 16, padding: 20 }}>
-          <div ref={logRef} style={{ height: 380, overflowY: 'auto', marginBottom: 16 }}>
+        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 16, padding: 24, boxShadow: '0 0 40px rgba(34,197,94,0.08)' }}>
+          <div ref={logRef} style={{ height: 520, overflowY: 'auto', marginBottom: 16 }}>
             {messages.map((m, i) => (
               <div key={i} style={{ marginBottom: 14, textAlign: m.role === 'user'? 'right' : 'left' }}>
                 <span style={{
-                  display: 'inline-block', background: m.role === 'user'? '#facc15' : '#1f1f1f',
-                  color: m.role === 'user'? '#0a0a0a' : '#e5e5e5',
+                  display: 'inline-block',
+                  background: m.role === 'user'? '#22c55e' : '#1e293b',
+                  color: m.role === 'user'? '#052e16' : '#e2e8f0',
                   padding: '10px 14px', borderRadius: 12, maxWidth: '80%', whiteSpace: 'pre-wrap',
                   position: 'relative', textAlign: 'left'
                 }}>
-                  {/* Vista previa de imagen si el mensaje contiene una */}
                   {m.dataUrl && (
                     <img
                       src={m.dataUrl}
@@ -435,20 +433,19 @@ return (
                       onClick={() => speak(m.content)}
                       title="Reproducir este mensaje"
                       style={{
-                        background: 'transparent', border: 'none', color: '#facc15',
-                        cursor: 'pointer', fontSize: 12, marginLeft: 8, opacity: 0.7
+                        background: 'transparent', border: 'none', color: '#22c55e',
+                        cursor: 'pointer', fontSize: 12, marginLeft: 8, opacity: 0.8
                       }}
                     >🔊</button>
                   )}
                 </span>
               </div>
             ))}
-            {/* CAMBIO 3: texto de carga */}
-            {loading && <p style={{ color: '#9ca3af' }}>Auditor está analizando…</p>}
+            {loading && <p style={{ color: '#94a3b8' }}>Auditor está analizando…</p>}
           </div>
 
           {file && (
-            <div style={{ background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', marginBottom: 8, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ background: '#020617', border: '1px solid #334155', borderRadius: 8, padding: '8px 12px', marginBottom: 8, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {file.dataUrl? (
                   <img src={file.dataUrl} alt="Miniatura" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover' }} />
@@ -465,27 +462,27 @@ return (
             <input type="file" ref={fileRef} hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.md,.json"
               onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
             <button onClick={() => fileRef.current?.click()}
-              style={{ background: '#1f1f1f', color: '#e5e5e5', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>📎</button>
+              style={{ background: '#1e293b', color: '#e5e5e5', border: '1px solid #334155', borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>📎</button>
             <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' &&!e.shiftKey && (e.preventDefault(), send())}
               placeholder="Escribe o adjunta un archivo..."
-              style={{ flex: 1, background: '#0a0a0a', color: '#fff', border: '1px solid #333', borderRadius: 10, padding: '12px 14px', outline: 'none' }} />
+              style={{ flex: 1, background: '#020617', color: '#fff', border: '1px solid #334155', borderRadius: 10, padding: '12px 14px', outline: 'none' }} />
             <button onClick={send} disabled={loading}
-              style={{ background: '#facc15', color: '#0a0a0a', border: 'none', borderRadius: 10, padding: '12px 20px', fontWeight: 700, cursor: 'pointer', opacity: loading? 0.6 : 1 }}>
+              style={{ background: '#22c55e', color: '#052e16', border: 'none', borderRadius: 10, padding: '12px 24px', fontWeight: 700, cursor: 'pointer', opacity: loading? 0.6 : 1 }}>
               Enviar
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 12, marginTop: 14, fontSize: 13, color: '#9ca3af', flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={toggleVoice} style={{ background: 'transparent', color: '#facc15', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', gap: 12, marginTop: 14, fontSize: 13, color: '#94a3b8', flexWrap: 'wrap', alignItems: 'center' }}>
+            <button onClick={toggleVoice} style={{ background: 'transparent', color: '#22c55e', border: '1px solid #334155', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               {voiceEnabled? '🔊 Voz ON' : '🔇 Voz OFF'}
             </button>
-            <button onClick={pauseResumeVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+            <button onClick={pauseResumeVoice} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               {isSpeaking &&!isPaused? '⏸ Pausar' : '▶ Reproducir'}
             </button>
-            <button onClick={replayVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+            <button onClick={replayVoice} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               🔁 Repetir
             </button>
-            <button onClick={stopVoice} style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #333', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+            <button onClick={stopVoice} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
               ⏹ Detener
             </button>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -499,8 +496,7 @@ return (
             <span>Imágenes, PDF, Word, Excel • máx 10MB</span>
           </div>
         </div>
-        {/* CAMBIO 4: footer */}
-        <p style={{ textAlign: 'center', color: '#555', fontSize: 12, marginTop: 24 }}>
+        <p style={{ textAlign: 'center', color: '#475569', fontSize: 12, marginTop: 24 }}>
           Auditor Financiero IA © 2026 — Inteligencia Local — Cesar Bedoya Barragán
         </p>
       </div>
